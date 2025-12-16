@@ -22,19 +22,7 @@ jobs:
       - name: 3. 安装系统依赖
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            python3-pip \
-            python3-dev \
-            build-essential \
-            git \
-            wget \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            zlib1g-dev \
-            libffi-dev \
-            libssl-dev \
-            expect
+          sudo apt-get install -y python3-pip python3-dev build-essential git wget zip unzip openjdk-17-jdk zlib1g-dev libffi-dev libssl-dev expect
 
       - name: 4. 安装Python构建工具
         run: |
@@ -54,51 +42,49 @@ jobs:
           fi
           echo "✅ 所有必要文件都存在"
 
-      - name: 6. 准备自动接受Android SDK许可
+      - name: 6. 自动接受Android SDK许可（直接方法）
         run: |
-          echo "准备自动接受Android SDK许可..."
+          echo "设置Android SDK许可自动接受..."
           
-          # 创建简单的expect脚本
-          cat > accept_licenses.sh << 'EOF'
-#!/bin/bash
-# 这个脚本会自动接受Android SDK许可
-echo "设置Android SDK许可自动接受..."
-
-# 创建许可目录
-mkdir -p ~/.android/licenses
-
-# 写入标准许可哈希
-echo -e "8933bad161af4178b1185d1a37fbf41ea5269c55\n84831b9409646a918e30573bab4c9c91346d8abd\nd975f751698a77b662f1254ddbeed3901e976f5a" > ~/.android/licenses/android-sdk-license
-
-# 设置环境变量
-export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-export ANDROID_HOME="$ANDROID_SDK_ROOT"
-export SDKMANAGER_OPTS="--sdk_root=$ANDROID_SDK_ROOT"
-
-echo "✅ 许可设置完成"
-EOF
+          # 方法1：直接创建许可文件
+          mkdir -p ~/.android/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" >> ~/.android/licenses/android-sdk-license
+          echo "d975f751698a77b662f1254ddbeed3901e976f5a" >> ~/.android/licenses/android-sdk-license
           
-          chmod +x accept_licenses.sh
+          # 方法2：使用yes命令自动回答
+          echo "准备yes命令用于自动回答..."
+          
+          # 设置环境变量
+          echo "ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+          
+          echo "✅ 许可设置完成"
 
-      - name: 7. 执行Buildozer构建（简化版）
+      - name: 7. 执行Buildozer构建
         id: build
         run: |
           echo "=== 开始Buildozer构建 ==="
           
-          # 运行许可接受脚本
-          ./accept_licenses.sh
+          # 设置构建环境
+          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          
+          # 尝试自动接受许可（如果SDK已下载）
+          if [ -d "$ANDROID_SDK_ROOT" ]; then
+            echo "尝试自动接受Android SDK许可..."
+            (sleep 2; echo y; sleep 2; echo y; sleep 2; echo y) | $ANDROID_SDK_ROOT/tools/bin/sdkmanager --licenses || true
+          fi
           
           echo "开始主构建过程..."
-          
-          # 使用简单的构建命令，避免复杂嵌套
           buildozer android debug 2>&1 | tee build.log
           
           build_status=${PIPESTATUS[0]}
           
           echo "=== Buildozer退出码: $build_status ==="
           
-          # 检查APK是否生成
-          if ls bin/*.apk 1>/dev/null 2>&1; then
+          # 检查构建结果
+          if [ $build_status -eq 0 ] && compgen -G "bin/*.apk" > /dev/null; then
             echo "✅ 构建成功!"
             apk_file=$(ls bin/*.apk | head -1)
             echo "APK文件: $apk_file"
@@ -106,10 +92,8 @@ EOF
             echo "apk_path=$apk_file" >> $GITHUB_OUTPUT
           else
             echo "❌ 构建失败"
-            echo "=== 最后100行日志 ==="
-            tail -100 build.log
-            echo "=== 关键错误信息 ==="
-            grep -i -B2 -A2 "error\|fail\|not found\|accept\|license" build.log | head -50
+            echo "=== 最后80行日志 ==="
+            tail -80 build.log
             exit 1
           fi
 
