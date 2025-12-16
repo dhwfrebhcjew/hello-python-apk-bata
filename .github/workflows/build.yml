@@ -1,0 +1,49 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 1. 下载代码
+      uses: actions/checkout@v2
+    
+    - name: 2. 设置Python环境
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+    
+    - name: 3. 安装打包工具
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          python3-pip \
+          build-essential \
+          git \
+          zip \
+          unzip \
+          openjdk-11-jdk \
+          libncurses5 \
+          libstdc++6 \
+          zlib1g-dev
+    
+    - name: 4. 安装Buildozer
+      run: |
+        pip install --upgrade pip
+        pip install buildozer cython==0.29.33 virtualenv
+    
+    - name: 5. 开始打包APK
+      run: |
+        echo "开始构建APK，这需要10-20分钟..."
+        buildozer android debug
+        echo "构建完成！"
+    
+    - name: 6. 上传APK文件
+      uses: actions/upload-artifact@v2
+      with:
+        name: hello-world-apk
+        path: bin/*.apk
