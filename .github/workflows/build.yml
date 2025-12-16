@@ -2,129 +2,243 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, master]
-  workflow_dispatch:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-
+  build-android:
+    runs-on: ubuntu-latest
+    
     steps:
-      - name: 1. 下载代码
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git \
+          zip \
+          unzip \
+          openjdk-17-jdk \
+          python3-pip \
+          python3-setuptools \
+          build-essential \
+          libffi-dev \
+          libssl-dev \
+          libxml2-dev \
+          libxslt1-dev \
+          zlib1g-dev \
+          expect
+        
+    - name: Install buildozer and requirements
+      run: |
+        pip3 install --upgrade pip
+        pip3 install buildozer cython
+        
+    - name: Set up Android SDK environment
+      run: |
+        # 创建必要的目录
+        mkdir -p ~/.android
+        touch ~/.android/repositories.cfg
+        
+        # 设置环境变量
+        echo "ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        
+        # 创建基础目录结构
+        mkdir -p ~/.buildozer/android/platform
+    
+    - name: Create buildozer.spec if not exists
+      run: |
+        if [ ! -f "buildozer.spec" ]; then
+          echo "Creating buildozer.spec..."
+          buildozer init
+        fi
+        
+        # 确保关键的配置存在
+        if ! grep -q "android.accept_license" buildozer.spec; then
+          echo "" >> buildozer.spec
+          echo "# 自动接受 Android SDK 许可证" >> buildozer.spec
+          echo "android.accept_license = yes" >> buildozer.spec
+        fi
+        
+        # 设置合理的 Android 配置
+        sed -i '/^android.sdk/d' buildozer.spec 2>/dev/null || true
+        echo "android.sdk = 34" >> buildozer.spec
+        
+        sed -i '/^android.ndk/d' buildozer.spec 2>/dev/null || true
+        echo "android.ndk = 25b" >> buildozer.spec
+        
+        sed -i '/^android.api/d' buildozer.spec 2>/dev/null || true
+        echo "android.api = 34" >> buildozer.spec
+        
+        sed -i '/^android.minapi/d' buildozer.spec 2>/dev/null || true
+        echo "android.minapi = 21" >> buildozer.spec
+        
+        # 显示配置
+        echo "=== buildozer.spec 配置 ==="
+        grep -E "(android\.|title|package\.name|requirements)" buildozer.spec || true
+    
+    - name: Accept Android SDK licenses before build
+      run: |
+        echo "=== 预接受 Android SDK 许可证 ==="
+        
+        # 创建一个 Expect 脚本来自动接受许可证
+        cat > /tmp/accept_licenses.exp << 'EOF'
+#!/usr/bin/expect -f
+set timeout 300
 
-      - name: 2. 设置Python环境
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+# 等待 SDK 管理器可用
+set max_attempts 30
+set attempt 1
 
-      - name: 3. 安装系统依赖
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            python3-pip \
-            python3-dev \
-            build-essential \
-            git \
-            wget \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            zlib1g-dev \
-            libffi-dev \
-            libssl-dev
+while {$attempt <= $max_attempts} {
+    if {[file exists "$env(HOME)/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager"]} {
+        break
+    }
+    puts "等待 SDK 管理器... ($attempt/$max_attempts)"
+    sleep 10
+    incr attempt
+}
 
-      - name: 4. 安装Python构建工具
-        run: |
-          python -m pip install --upgrade pip
-          pip install buildozer cython
+if {![file exists "$env(HOME)/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager"]} {
+    puts "错误: SDK 管理器未找到"
+    exit 1
+}
 
-      - name: 5. 验证配置文件
-        run: |
-          echo "验证配置文件..."
-          if [ ! -f "buildozer.spec" ]; then
-            echo "错误: 缺少 buildozer.spec 文件"
-            exit 1
+set sdkmanager "$env(HOME)/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager"
+set sdk_root "$env(HOME)/.buildozer/android/platform/android-sdk"
+
+puts "使用 SDK 管理器: $sdkmanager"
+
+# 运行 sdkmanager --licenses 并自动接受
+spawn $sdkmanager --sdk_root=$sdk_root --licenses
+
+expect {
+    "Accept? (y/N):" {
+        send "y\r"
+        exp_continue
+    }
+    "Review licenses that have not been accepted (y/N)?" {
+        send "y\r"
+        exp_continue
+    }
+    timeout {
+        puts "超时，继续..."
+        send "y\r"
+        exp_continue
+    }
+    eof
+}
+EOF
+        
+        chmod +x /tmp/accept_licenses.exp
+        
+        # 等待 SDK 下载完成（在第一次 buildozer 运行时）
+        echo "等待 Android SDK 下载..."
+        timeout 300 bash -c 'while [ ! -f ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager ]; do sleep 10; echo "等待..."; done' || echo "继续..."
+        
+        # 尝试接受许可证
+        if [ -f ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager ]; then
+          echo "运行许可证接受脚本..."
+          expect -f /tmp/accept_licenses.exp || true
+        else
+          echo "SDK 管理器不存在，将在构建过程中处理"
+        fi
+        
+        # 另一种方法：使用 yes 命令
+        echo "尝试使用 yes 命令接受许可证..."
+        if [ -f ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager ]; then
+          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=~/.buildozer/android/platform/android-sdk --licenses || true
+        fi
+    
+    - name: Build Android APK
+      run: |
+        echo "=== 开始构建 Android APK ==="
+        
+        # 设置环境变量
+        export ANDROID_HOME="$HOME/.buildozer/android/platform/android-sdk"
+        export ANDROID_SDK_ROOT="$ANDROID_HOME"
+        export PATH="$ANDROID_HOME/tools/bin:$ANDROID_HOME/platform-tools:$PATH"
+        
+        # 创建包装脚本以处理交互
+        cat > /tmp/build_wrapper.exp << 'EOF'
+#!/usr/bin/expect -f
+set timeout 1800  # 30分钟超时
+
+spawn buildozer -v android debug
+
+expect {
+    "Accept? (y/N):" {
+        send "y\r"
+        exp_continue
+    }
+    "Review licenses that have not been accepted (y/N)?" {
+        send "y\r"
+        exp_continue
+    }
+    "Do you accept the license" {
+        send "y\r"
+        exp_continue
+    }
+    "License agreement" {
+        send "y\r"
+        exp_continue
+    }
+    timeout {
+        send_user "超时，继续等待...\n"
+        exp_continue
+    }
+    eof
+}
+EOF
+        
+        chmod +x /tmp/build_wrapper.exp
+        
+        # 尝试构建
+        echo "运行构建..."
+        /tmp/build_wrapper.exp || {
+          echo "构建可能失败，尝试直接构建..."
+          buildozer -v android debug
+        }
+        
+        # 检查构建结果
+        if ls bin/*.apk 2>/dev/null; then
+          echo "✅ APK 构建成功！"
+          echo "APK 文件:"
+          ls -la bin/*.apk
+        else
+          echo "❌ APK 构建失败"
+          # 显示错误日志
+          if [ -f ".buildozer/android/platform/build-*/build.out" ]; then
+            echo "=== 构建错误日志 ==="
+            tail -100 .buildozer/android/platform/build-*/build.out
           fi
-          if [ ! -f "main.py" ]; then
-            echo "错误: 缺少 main.py 文件"
-            exit 1
-          fi
-          echo "✅ 所有必要文件都存在"
-
-      - name: 6. 使用替代方法自动接受Android SDK许可
-        run: |
-          echo "准备Android SDK构建环境..."
-          
-          # 方法1: 预先创建所有必要的许可文件
-          mkdir -p ~/.android/licenses
-          
-          # 这些是Android SDK所需的标准许可哈希
-          licenses=(
-            "8933bad161af4178b1185d1a37fbf41ea5269c55"
-            "84831b9409646a918e30573bab4c9c91346d8abd"
-            "d975f751698a77b662f1254ddbeed3901e976f5a"
-            "601085b94cd77f0b54ff86406957099ebe79c4d6"
-            "33b6a2b64607f11b759f220ef9d26a5fc5d2a6b5"
-          )
-          
-          for license in "${licenses[@]}"; do
-            echo "$license" >> ~/.android/licenses/android-sdk-license
-          done
-          
-          echo "✅ Android SDK许可文件已创建"
-          
-          # 方法2: 设置环境变量跳过许可检查
-          echo "ANDROID_LICENSE_HASH=${licenses[0]}" >> $GITHUB_ENV
-          echo "ACCEPT_LICENSE=accept" >> $GITHUB_ENV
-
-      - name: 7. 执行Buildozer构建 (带自动许可接受)
-        id: build
-        run: |
-          echo "开始Buildozer构建..."
-          
-          # 设置超时和详细日志
-          timeout 2400 bash -c '
-            echo "构建开始时间: $(date)"
-            
-            # 关键: 使用expect自动回答许可提示 (如果许可文件方法失效时的备选)
-            if ! command -v expect &> /dev/null; then
-              sudo apt-get install -y expect
-            fi
-            
-            # 主构建命令
-            buildozer android debug
-          ' 2>&1 | tee build.log
-          
-          build_status=$?
-          
-          # 检查构建结果
-          if [ $build_status -eq 0 ] && ls bin/*.apk 1>/dev/null 2>&1; then
-            echo "✅ 构建成功!"
-            apk_file=$(ls bin/*.apk | head -1)
-            echo "APK文件: $apk_file"
-            echo "文件大小: $(du -h "$apk_file" | cut -f1)"
-            echo "apk_path=$apk_file" >> $GITHUB_OUTPUT
-          else
-            echo "❌ 构建失败，退出码: $build_status"
-            echo "=== 构建日志最后100行 ==="
-            tail -100 build.log
-            echo "=== 日志结束 ==="
-            exit 1
-          fi
-
-      - name: 8. 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: bin/*.apk
-          if-no-files-found: error
-
-      - name: 9. 上传构建日志
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: build.log
-          if-no-files-found: warn
+          exit 1
+        fi
+    
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: bin/*.apk
+        retention-days: 7
+        
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          .buildozer/*.log
+          .buildozer/android/platform/*.log
+          buildozer.spec
+        retention-days: 7
