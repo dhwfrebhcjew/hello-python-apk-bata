@@ -7,134 +7,187 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45  # 设置超时时间
-    
+    runs-on: ubuntu-24.04  # 明确指定使用 Ubuntu 24.04
+    timeout-minutes: 50  # 稍微增加超时时间
+
     steps:
-    - name: 1. 下载代码
+    - name: 1. 下载代码到云端服务器
       uses: actions/checkout@v4
-    
-    - name: 2. 设置Python环境
+
+    - name: 2. 设置 Python 环境
       uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
-    
-    - name: 3. 安装系统依赖
+        python-version: '3.10'  # 使用 Python 3.10，兼容性更好
+
+    - name: 3. 安装 Ubuntu 24.04 系统依赖 (关键修复)
       run: |
-        sudo apt-get update
+        sudo apt-get update -y
         sudo apt-get install -y \
           python3-pip \
+          python3-dev \
+          python3-venv \
           build-essential \
           git \
           wget \
+          curl \
           zip \
           unzip \
           openjdk-17-jdk \
-          libncurses5 \
+          libncurses6 \           # Ubuntu 24.04 中已更新为此版本
           libstdc++6 \
           zlib1g-dev \
           libffi-dev \
-          libssl-dev
-    
-    - name: 4. 安装Buildozer和依赖
+          libssl-dev \
+          libltdl-dev \
+          libgl1-mesa-dev \
+          libgles2-mesa-dev \
+          pkg-config \
+          autoconf \
+          automake \
+          libtool \
+          cmake \
+          ninja-build \
+          patchelf
+
+    - name: 4. 安装 Python 构建工具
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install --no-cache-dir buildozer cython==0.29.33
-    
+        pip install --no-cache-dir \
+          buildozer \
+          cython==0.29.33 \
+          virtualenv \
+          setuptools==65.5.0  # 使用稳定版本
+
     - name: 5. 显示环境信息
       run: |
+        echo "=== 环境信息 ==="
+        echo "系统版本: $(lsb_release -ds)"
         echo "Python版本: $(python --version)"
-        echo "Buildozer版本: $(buildozer --version 2>/dev/null || echo '未安装')"
+        echo "Buildozer版本: $(buildozer --version 2>/dev/null || echo '正在检查...')"
         echo "Java版本: $(java -version 2>&1 | head -1)"
-    
-    - name: 6. 准备构建环境
-      run: |
-        # 创建日志文件
-        touch build_output.log
-        echo "环境准备完成" >> build_output.log
-        
-        # 确保bin目录存在
-        mkdir -p bin
-        
-        # 显示当前目录结构
-        echo "当前目录结构:"
+        echo "当前目录: $(pwd)"
         ls -la
-    
-    - name: 7. 开始构建APK（关键修复步骤）
-      id: build-apk
+
+    - name: 6. 准备构建目录和日志
       run: |
-        echo "=== 开始构建APK ==="
+        echo "准备构建环境..."
+        mkdir -p bin
+        touch build_output.log
+        echo "构建开始时间: $(date)" >> build_output.log
+        echo "环境准备完成" >> build_output.log
+
+    - name: 7. 设置 Android 构建加速镜像 (可选)
+      run: |
+        # 设置环境变量以使用国内镜像加速下载 (如果遇到下载问题)
+        echo "设置构建环境变量..."
+        echo "BUILD_MEMORY=4G" >> $GITHUB_ENV
+        echo "GRADLE_OPTS='-Xmx4096m -Dorg.gradle.daemon=false'" >> $GITHUB_ENV
         
-        # 使用timeout防止无限挂起，并保存完整日志
-        timeout 2400 buildozer android debug 2>&1 | tee -a build_output.log
+        # 创建Buildozer配置目录
+        mkdir -p ~/.buildozer
+        echo "镜像设置完成"
+
+    - name: 8. 执行 APK 构建 (核心步骤)
+      id: build-apk
+      continue-on-error: false
+      run: |
+        echo "=== 开始执行 APK 构建 ===" | tee -a build_output.log
         
-        BUILD_STATUS=${PIPESTATUS[0]}
+        # 设置构建超时 (40分钟)，并记录详细日志
+        timeout 2400 bash -c '
+          echo "Buildozer 构建开始: $(date)" | tee -a build_output.log
+          buildozer android debug 2>&1 | tee -a build_output.log
+          BUILD_EXIT=${PIPESTATUS[0]}
+          echo "Buildozer 构建结束，退出码: $BUILD_EXIT" | tee -a build_output.log
+          exit $BUILD_EXIT
+        '
         
-        echo "=== 构建过程结束，退出代码: $BUILD_STATUS ==="
+        BUILD_STATUS=$?
+        echo "=== 整体构建过程退出代码: $BUILD_STATUS ===" | tee -a build_output.log
         
-        # 检查APK是否生成
+        # 检查 APK 是否生成
         if ls bin/*.apk 1> /dev/null 2>&1; then
-          echo "✅ SUCCESS: APK构建成功！"
+          echo "✅ 构建成功: 找到 APK 文件！" | tee -a build_output.log
           APK_FILE=$(ls bin/*.apk | head -1)
-          echo "生成的APK: $APK_FILE"
-          echo "文件大小: $(du -h "$APK_FILE" | cut -f1)"
-          echo "::set-output name=apk_path::$APK_FILE"
-          exit 0
-        else
-          echo "❌ FAILURE: 未找到APK文件"
-          echo "=== 开始输出构建日志（最后200行）==="
-          tail -200 build_output.log
-          echo "=== 构建日志输出结束 ==="
+          echo "APK 文件: $APK_FILE" | tee -a build_output.log
+          echo "文件大小: $(du -h "$APK_FILE" | cut -f1)" | tee -a build_output.log
+          echo "::notice title=构建成功::APK 已生成: $APK_FILE"
           
-          # 如果是超时，提供特定错误信息
+          # 设置输出变量供后续步骤使用
+          echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
+        else
+          echo "❌ 构建失败: 未找到 APK 文件" | tee -a build_output.log
+          echo "=== 构建日志最后 150 行 ===" | tee -a build_output.log
+          tail -150 build_output.log | tee -a build_output.log
+          echo "=== 日志结束 ===" | tee -a build_output.log
+          
+          # 根据退出状态提供诊断
           if [ $BUILD_STATUS -eq 124 ]; then
-            echo "错误: 构建超时（超过40分钟）"
-            echo "建议: 1. 检查buildozer.spec配置 2. 减少requirements中的包"
+            echo "错误类型: 构建超时 (超过40分钟)" | tee -a build_output.log
+            echo "建议: 1. 检查网络连接 2. 简化 requirements 3. 增加超时时间" | tee -a build_output.log
+          elif [ $BUILD_STATUS -ne 0 ]; then
+            echo "错误类型: 构建过程错误 (退出码: $BUILD_STATUS)" | tee -a build_output.log
           fi
           
+          echo "::error title=构建失败::APK 构建失败，请检查日志"
           exit 1
         fi
-    
-    - name: 8. 上传构建日志
-      if: always()  # 无论成功失败都上传日志
+
+    - name: 9. 上传构建日志 (始终执行)
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: build-logs
-        path: |
-          build_output.log
-        if-no-files-found: warn
-        retention-days: 7
-    
-    - name: 9. 上传APK文件
-      if: success()  # 只有构建成功时才上传APK
+        path: build_output.log
+        if-no-files-found: ignore
+        retention-days: 14
+
+    - name: 10. 上传生成的 APK 文件
+      if: success() && steps.build-apk.outputs.apk_path
       uses: actions/upload-artifact@v4
       with:
         name: android-apk
         path: bin/*.apk
         if-no-files-found: error
         retention-days: 30
-    
-    - name: 10. 构建失败时的额外诊断
+        overwrite: true
+
+    - name: 11. 构建失败诊断 (仅在失败时运行)
       if: failure()
       run: |
-        echo "=== 构建失败诊断信息 ==="
-        echo "检查buildozer.spec文件:"
+        echo "=== 构建失败额外诊断 ==="
+        echo "诊断时间: $(date)"
+        
+        # 检查关键配置文件
+        echo "1. 检查 buildozer.spec:"
         if [ -f "buildozer.spec" ]; then
-          echo "文件存在，内容预览:"
-          head -50 buildozer.spec
+          echo "   - 文件存在"
+          echo "   - 文件大小: $(wc -l < buildozer.spec) 行"
+          echo "   - 关键配置预览:"
+          grep -E "^(title|package\.|requirements|android\.)" buildozer.spec | head -20
         else
-          echo "错误: 找不到buildozer.spec文件"
+          echo "   - 错误: 找不到 buildozer.spec"
         fi
         
-        echo "检查main.py文件:"
+        echo ""
+        echo "2. 检查 main.py:"
         if [ -f "main.py" ]; then
-          echo "文件存在，大小: $(wc -l < main.py) 行"
+          echo "   - 文件存在"
+          echo "   - 文件大小: $(wc -l < main.py) 行"
         else
-          echo "错误: 找不到main.py文件"
+          echo "   - 错误: 找不到 main.py"
         fi
         
-        echo "检查.buildozer目录:"
+        echo ""
+        echo "3. 检查 .buildozer 目录:"
         if [ -d ".buildozer" ]; then
-          echo "目录存在，内容:"
-          ls -la .buildozer/
+          echo "   - 目录存在"
+          echo "   - 目录大小: $(du -sh .buildozer | cut -f1)"
+          echo "   - 子目录:"
+          find .buildozer -maxdepth 2 -type d | sort
+        else
+          echo "   - 警告: .buildozer 目录不存在，可能构建未正确启动"
         fi
+        
+        echo ""
+        echo "=== 诊断结束 ==="
