@@ -2,22 +2,24 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 1. 下载代码
-      uses: actions/checkout@v2
+    - name: 1. 下载代码到服务器
+      uses: actions/checkout@v3
     
     - name: 2. 设置Python环境
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
         python-version: '3.9'
     
-    - name: 3. 安装打包工具
+    - name: 3. 安装系统依赖
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -29,21 +31,50 @@ jobs:
           openjdk-11-jdk \
           libncurses5 \
           libstdc++6 \
-          zlib1g-dev
+          zlib1g-dev \
+          libffi-dev \
+          libssl-dev
     
-    - name: 4. 安装Buildozer
+    - name: 4. 安装Python包
       run: |
-        pip install --upgrade pip
-        pip install buildozer cython==0.29.33 virtualenv
+        python -m pip install --upgrade pip
+        pip install cython==0.29.33 virtualenv buildozer
     
-    - name: 5. 开始打包APK
+    - name: 5. 创建必要的缓存目录
       run: |
-        echo "开始构建APK，这需要10-20分钟..."
-        buildozer android debug
-        echo "构建完成！"
+        mkdir -p ~/.buildozer
+        mkdir -p ~/.android
     
-    - name: 6. 上传APK文件
-      uses: actions/upload-artifact@v2
+    - name: 6. 开始打包APK
+      run: |
+        echo "开始构建APK，首次构建需要20-40分钟..."
+        buildozer android debug 2>&1 | tee build.log
+        echo "检查构建结果..."
+    
+    - name: 7. 检查APK是否生成
+      run: |
+        if [ -f bin/*.apk ]; then
+          echo "✅ APK生成成功!"
+          ls -la bin/*.apk
+        else
+          echo "❌ 未找到APK文件，查看日志..."
+          cat build.log
+          exit 1
+        fi
+    
+    - name: 8. 上传APK文件（使用v4版本）
+      uses: actions/upload-artifact@v4
       with:
         name: hello-world-apk
         path: bin/*.apk
+        if-no-files-found: error
+        retention-days: 7
+    
+    - name: 9. 上传构建日志（可选）
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: build-logs
+        path: |
+          build.log
+          .buildozer/*.log
