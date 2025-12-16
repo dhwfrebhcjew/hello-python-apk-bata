@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60  # 增加到60分钟，首次下载SDK可能较慢
+    timeout-minutes: 60
 
     steps:
     - name: 1. 下载代码
@@ -43,10 +43,7 @@ jobs:
     - name: 4. 安装 Python 构建工具
       run: |
         python -m pip install --upgrade pip setuptools wheel
-        pip install --no-cache-dir \
-          buildozer \
-          cython==0.29.33 \
-          virtualenv
+        pip install --no-cache-dir buildozer cython==0.29.33 virtualenv
 
     - name: 5. 显示环境信息
       run: |
@@ -89,42 +86,33 @@ log_level = 2
 EOF
         fi
 
-    - name: 7. 设置 Android SDK 许可接受（关键修复）
+    - name: 7. 设置 Android SDK 许可接受
       run: |
         echo "设置 Android SDK 许可自动接受..."
-        # 创建 Android SDK 目录
-        mkdir -p ~/.android
-        
-        # 创建 licenses 目录
         mkdir -p ~/.android/licenses
-        
-        # 预先写入所有需要的许可协议接受文件
-        # 这是 Android SDK 要求的自动接受方式
         echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/licenses/android-sdk-license
         echo "84831b9409646a918e30573bab4c9c91346d8abd" > ~/.android/licenses/android-sdk-preview-license
         echo "d975f751698a77b662f1254ddbeed3901e976f5a" > ~/.android/licenses/intel-android-extra-license
-        
         echo "✅ Android SDK 许可已自动接受"
         
-        # 设置环境变量，确保在构建过程中也接受许可
         echo "ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
         echo "ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "YES_I_HAVE_THE_RIGHT_TO_USE_THESE_PACKAGES=yes" >> $GITHUB_ENV
 
-    - name: 8. 执行 APK 构建（修复许可问题）
+    - name: 8. 执行 APK 构建
       id: build-apk
       continue-on-error: false
       run: |
         echo "=== 开始执行 APK 构建 ==="
         
-        # 设置构建超时并记录日志
-        # 首次构建可能需要更长时间来下载 Android SDK
+        # 设置构建超时
         timeout 3600 bash -c '
           echo "Buildozer 构建开始: $(date)"
           
-          # 强制接受所有 Android 许可
-          echo "正在接受 Android SDK 许可..."
-          yes | $HOME/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses 2>&1 || true
+          # 强制接受 Android 许可
+          if [ -d "$HOME/.buildozer/android/platform/android-sdk" ]; then
+            echo "接受 Android SDK 许可..."
+            yes | $HOME/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses 2>&1 || true
+          fi
           
           echo "开始执行 buildozer..."
           buildozer android debug 2>&1
@@ -143,11 +131,9 @@ EOF
           echo "APK 文件: $APK_FILE"
           echo "文件大小: $(du -h "$APK_FILE" | cut -f1)"
           echo "::notice title=构建成功::APK 已生成: $APK_FILE"
-          
-          # 显示成功信息
           echo ""
           echo "🎉 恭喜！APK 构建成功！"
-          echo "📱 您可以在上方的 'Artifacts' 区域下载生成的 APK 文件"
+          echo "📱 您可以在上方的 Artifacts 区域下载生成的 APK 文件"
           echo "🔧 文件名为: android-apk"
         else
           echo "❌ 构建失败: 未找到 APK 文件"
@@ -174,7 +160,7 @@ EOF
         if-no-files-found: warn
         retention-days: 14
 
-    - name: 10. 上传生成的 APK 文件
+    - name: 10. 上传 APK 文件
       if: success()
       uses: actions/upload-artifact@v4
       with:
@@ -182,28 +168,3 @@ EOF
         path: bin/*.apk
         if-no-files-found: error
         retention-days: 30
-
-    - name: 11. 构建失败诊断
-      if: failure()
-      run: |
-        echo "=== 构建失败诊断 ==="
-        echo "诊断时间: $(date)"
-        
-        echo "1. 检查关键文件:"
-        for file in "buildozer.spec" "main.py"; do
-          if [ -f "$file" ]; then
-            echo "   ✅ $file 存在"
-          else
-            echo "   ❌ $file 不存在"
-          fi
-        done
-        
-        echo ""
-        echo "2. 检查 Android SDK 许可:"
-        if [ -d "$HOME/.android/licenses" ]; then
-          echo "   ✅ Android 许可目录存在"
-          echo "   许可文件:"
-          ls -la $HOME/.android/licenses/
-        else
-          echo "   ❌ Android 许可目录不存在"
-        fi
