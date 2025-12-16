@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -11,61 +11,61 @@ jobs:
     timeout-minutes: 60
 
     steps:
-    - name: 1. 下载代码
-      uses: actions/checkout@v4
+      - name: 1. 下载代码
+        uses: actions/checkout@v4
 
-    - name: 2. 设置 Python 环境
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: 2. 设置Python环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: 3. 安装系统依赖
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y \
-          python3-pip \
-          python3-dev \
-          build-essential \
-          git \
-          wget \
-          zip \
-          unzip \
-          openjdk-17-jdk \
-          zlib1g-dev \
-          libffi-dev \
-          libssl-dev \
-          libltdl-dev \
-          pkg-config \
-          autoconf \
-          automake \
-          libtool
+      - name: 3. 安装系统依赖
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            python3-pip \
+            python3-dev \
+            build-essential \
+            git \
+            wget \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            zlib1g-dev \
+            libffi-dev \
+            libssl-dev \
+            libltdl-dev \
+            pkg-config \
+            autoconf \
+            automake \
+            libtool
 
-    - name: 4. 安装 Python 构建工具
-      run: |
-        python -m pip install --upgrade pip setuptools wheel
-        pip install --no-cache-dir buildozer cython==0.29.33 virtualenv
+      - name: 4. 安装Python构建工具
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install --no-cache-dir buildozer cython==0.29.33 virtualenv
 
-    - name: 5. 显示环境信息
-      run: |
-        echo "=== 环境信息 ==="
-        echo "系统版本: $(lsb_release -ds)"
-        echo "Python版本: $(python --version)"
-        echo "当前目录: $(pwd)"
-        echo "目录内容:"
-        ls -la
+      - name: 5. 显示环境信息
+        run: |
+          echo "=== 环境信息 ==="
+          echo "系统版本: $(lsb_release -ds)"
+          echo "Python版本: $(python --version)"
+          echo "当前目录: $(pwd)"
+          echo "目录内容:"
+          ls -la
 
-    - name: 6. 检查并修复 buildozer.spec 配置
-      run: |
-        echo "检查 buildozer.spec 配置..."
-        if [ -f "buildozer.spec" ]; then
-          echo "✅ 找到 buildozer.spec 文件"
-          if grep -q "version.regex" buildozer.spec; then
-            echo "修复: 移除 version.regex 配置"
-            sed -i '/version\.regex/d' buildozer.spec
-          fi
-        else
-          echo "❌ 未找到 buildozer.spec，创建默认配置"
-          cat > buildozer.spec << 'EOF'
+      - name: 6. 检查并修复buildozer.spec配置
+        run: |
+          echo "检查 buildozer.spec 配置..."
+          if [ -f "buildozer.spec" ]; then
+            echo "✅ 找到 buildozer.spec 文件"
+            if grep -q "version.regex" buildozer.spec; then
+              echo "修复: 移除 version.regex 配置"
+              sed -i '/version\.regex/d' buildozer.spec
+            fi
+          else
+            echo "❌ 未找到 buildozer.spec，创建默认配置"
+            cat > buildozer.spec << 'EOF'
 [app]
 title = Hello Python APK
 package.name = hellopythonapk
@@ -84,87 +84,81 @@ android.arch = arm64-v8a
 [buildozer]
 log_level = 2
 EOF
-        fi
-
-    - name: 7. 设置 Android SDK 许可接受
-      run: |
-        echo "设置 Android SDK 许可自动接受..."
-        mkdir -p ~/.android/licenses
-        echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/licenses/android-sdk-license
-        echo "84831b9409646a918e30573bab4c9c91346d8abd" > ~/.android/licenses/android-sdk-preview-license
-        echo "d975f751698a77b662f1254ddbeed3901e976f5a" > ~/.android/licenses/intel-android-extra-license
-        echo "✅ Android SDK 许可已自动接受"
-        
-        echo "ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-        echo "ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
-
-    - name: 8. 执行 APK 构建
-      id: build-apk
-      continue-on-error: false
-      run: |
-        echo "=== 开始执行 APK 构建 ==="
-        
-        # 设置构建超时
-        timeout 3600 bash -c '
-          echo "Buildozer 构建开始: $(date)"
-          
-          # 强制接受 Android 许可
-          if [ -d "$HOME/.buildozer/android/platform/android-sdk" ]; then
-            echo "接受 Android SDK 许可..."
-            yes | $HOME/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses 2>&1 || true
           fi
+
+      - name: 7. 设置Android SDK许可接受
+        run: |
+          echo "设置 Android SDK 许可自动接受..."
+          mkdir -p ~/.android/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" > ~/.android/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > ~/.android/licenses/android-sdk-preview-license
+          echo "d975f751698a77b662f1254ddbeed3901e976f5a" > ~/.android/licenses/intel-android-extra-license
+          echo "✅ Android SDK 许可已自动接受"
+
+      - name: 8. 执行APK构建
+        id: build-apk
+        continue-on-error: false
+        run: |
+          echo "=== 开始执行 APK 构建 ==="
           
-          echo "开始执行 buildozer..."
-          buildozer android debug 2>&1
-          BUILD_EXIT=${PIPESTATUS[0]}
-          echo "Buildozer 构建结束，退出码: $BUILD_EXIT"
-          exit $BUILD_EXIT
-        ' 2>&1 | tee build_output.log
-        
-        BUILD_STATUS=$?
-        echo "=== 整体构建过程退出代码: $BUILD_STATUS ==="
-        
-        # 检查 APK 是否生成
-        if ls bin/*.apk 1> /dev/null 2>&1; then
-          echo "✅ 构建成功: 找到 APK 文件！"
-          APK_FILE=$(ls bin/*.apk | head -1)
-          echo "APK 文件: $APK_FILE"
-          echo "文件大小: $(du -h "$APK_FILE" | cut -f1)"
-          echo "::notice title=构建成功::APK 已生成: $APK_FILE"
-          echo ""
-          echo "🎉 恭喜！APK 构建成功！"
-          echo "📱 您可以在上方的 Artifacts 区域下载生成的 APK 文件"
-          echo "🔧 文件名为: android-apk"
-        else
-          echo "❌ 构建失败: 未找到 APK 文件"
-          echo "=== 构建日志最后 50 行 ==="
-          tail -50 build_output.log
-          echo "=== 日志结束 ==="
+          timeout 3600 bash -c '
+            echo "Buildozer 构建开始: $(date)"
+            
+            if [ -d "$HOME/.buildozer/android/platform/android-sdk" ]; then
+              echo "接受 Android SDK 许可..."
+              yes | $HOME/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses 2>&1 || true
+            fi
+            
+            echo "开始执行 buildozer..."
+            buildozer android debug 2>&1
+            BUILD_EXIT=${PIPESTATUS[0]}
+            echo "Buildozer 构建结束，退出码: $BUILD_EXIT"
+            exit $BUILD_EXIT
+          ' 2>&1 | tee build_output.log
           
-          if [ $BUILD_STATUS -eq 124 ]; then
-            echo "错误类型: 构建超时 (超过60分钟)"
-          elif [ $BUILD_STATUS -ne 0 ]; then
-            echo "错误类型: 构建过程错误 (退出码: $BUILD_STATUS)"
+          BUILD_STATUS=$?
+          echo "=== 整体构建过程退出代码: $BUILD_STATUS ==="
+          
+          if ls bin/*.apk 1> /dev/null 2>&1; then
+            echo "✅ 构建成功: 找到 APK 文件！"
+            APK_FILE=$(ls bin/*.apk | head -1)
+            echo "APK 文件: $APK_FILE"
+            echo "文件大小: $(du -h "$APK_FILE" | cut -f1)"
+            echo "::notice title=构建成功::APK 已生成: $APK_FILE"
+            echo ""
+            echo "🎉 恭喜！APK 构建成功！"
+            echo "📱 您可以在上方的 Artifacts 区域下载生成的 APK 文件"
+            echo "🔧 文件名为: android-apk"
+          else
+            echo "❌ 构建失败: 未找到 APK 文件"
+            echo "=== 构建日志最后 50 行 ==="
+            tail -50 build_output.log
+            echo "=== 日志结束 ==="
+            
+            if [ $BUILD_STATUS -eq 124 ]; then
+              echo "错误类型: 构建超时 (超过60分钟)"
+            elif [ $BUILD_STATUS -ne 0 ]; then
+              echo "错误类型: 构建过程错误 (退出码: $BUILD_STATUS)"
+            fi
+            
+            echo "::error title=构建失败::APK 构建失败，请检查日志"
+            exit 1
           fi
-          
-          echo "::error title=构建失败::APK 构建失败，请检查日志"
-          exit 1
-        fi
 
-    - name: 9. 上传构建日志
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: build_output.log
-        if-no-files-found: warn
-        retention-days: 14
+      - name: 9. 上传构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: build_output.log
+          if-no-files-found: warn
+          retention-days: 14
 
-    - name: 10. 上传 APK 文件
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: android-apk
-        path: bin/*.apk
-        if-no-files-found: error
-        retention-days: 30
+      - name: 10. 上传APK文件
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 30
