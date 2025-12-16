@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: 3. 安装系统依赖（包括expect）
+      - name: 3. 安装系统依赖
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
@@ -34,7 +34,7 @@ jobs:
             zlib1g-dev \
             libffi-dev \
             libssl-dev \
-            expect  # 关键：安装expect来自动交互
+            expect
 
       - name: 4. 安装Python构建工具
         run: |
@@ -45,80 +45,71 @@ jobs:
         run: |
           echo "验证配置文件..."
           if [ ! -f "buildozer.spec" ]; then
-            echo "❌ 错误: 缺少 buildozer.spec 文件"
+            echo "错误: 缺少 buildozer.spec 文件"
             exit 1
           fi
           if [ ! -f "main.py" ]; then
-            echo "❌ 错误: 缺少 main.py 文件"
+            echo "错误: 缺少 main.py 文件"
             exit 1
           fi
           echo "✅ 所有必要文件都存在"
 
-      - name: 6. 使用expect自动接受所有Android SDK许可（关键修复）
+      - name: 6. 准备自动接受Android SDK许可
         run: |
-          echo "创建expect脚本来自动接受Android SDK许可..."
+          echo "准备自动接受Android SDK许可..."
           
-          # 创建expect脚本
-          cat > accept_licenses.exp << 'EOF'
-#!/usr/bin/expect -f
-set timeout -1
+          # 创建简单的expect脚本
+          cat > accept_licenses.sh << 'EOF'
+#!/bin/bash
+# 这个脚本会自动接受Android SDK许可
+echo "设置Android SDK许可自动接受..."
 
-# 启动sdkmanager并自动回答所有y
-spawn $env(HOME)/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --licenses
-expect {
-  "Accept? (y/N):" {
-    send "y\r"
-    exp_continue
-  }
-  eof
-}
+# 创建许可目录
+mkdir -p ~/.android/licenses
+
+# 写入标准许可哈希
+echo -e "8933bad161af4178b1185d1a37fbf41ea5269c55\n84831b9409646a918e30573bab4c9c91346d8abd\nd975f751698a77b662f1254ddbeed3901e976f5a" > ~/.android/licenses/android-sdk-license
+
+# 设置环境变量
+export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+export ANDROID_HOME="$ANDROID_SDK_ROOT"
+export SDKMANAGER_OPTS="--sdk_root=$ANDROID_SDK_ROOT"
+
+echo "✅ 许可设置完成"
 EOF
           
-          chmod +x accept_licenses.exp
-          echo "✅ expect脚本创建完成"
+          chmod +x accept_licenses.sh
 
-      - name: 7. 执行Buildozer构建（带自动许可接受）
+      - name: 7. 执行Buildozer构建（简化版）
         id: build
         run: |
-          echo "开始Buildozer构建..."
+          echo "=== 开始Buildozer构建 ==="
           
-          # 设置环境变量确保使用正确的SDK路径
-          export ANDROID_SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          export ANDROID_HOME="$ANDROID_SDK_ROOT"
-          
-          # 方法1：先尝试使用expect脚本接受许可
-          if [ -f "accept_licenses.exp" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
-            echo "尝试使用expect自动接受许可..."
-            ./accept_licenses.exp || echo "expect脚本执行完成"
-          fi
-          
-          # 方法2：使用echo模拟输入（备选方案）
-          echo "备选方案：使用echo传递y到sdkmanager..."
-          yes | $ANDROID_SDK_ROOT/tools/bin/sdkmanager --licenses 2>&1 | head -50 || true
-          
-          # 方法3：直接接受build-tools许可
-          echo "直接安装必要的build-tools..."
-          echo "y" | $ANDROID_SDK_ROOT/tools/bin/sdkmanager "platform-tools" "build-tools;30.0.3" 2>&1 | tail -20 || true
+          # 运行许可接受脚本
+          ./accept_licenses.sh
           
           echo "开始主构建过程..."
-          # 执行buildozer构建
+          
+          # 使用简单的构建命令，避免复杂嵌套
           buildozer android debug 2>&1 | tee build.log
           
           build_status=${PIPESTATUS[0]}
           
-          # 检查构建结果
-          if [ $build_status -eq 0 ] && ls bin/*.apk 1>/dev/null 2>&1; then
+          echo "=== Buildozer退出码: $build_status ==="
+          
+          # 检查APK是否生成
+          if ls bin/*.apk 1>/dev/null 2>&1; then
             echo "✅ 构建成功!"
             apk_file=$(ls bin/*.apk | head -1)
             echo "APK文件: $apk_file"
             echo "文件大小: $(du -h "$apk_file" | cut -f1)"
             echo "apk_path=$apk_file" >> $GITHUB_OUTPUT
           else
-            echo "❌ 构建失败，退出码: $build_status"
-            echo "=== 最后50行日志 ==="
-            tail -50 build.log
-            echo "=== 检查关键错误 ==="
-            grep -i "error\|fail\|not found\|accept" build.log | head -20
+            echo "❌ 构建失败"
+            echo "=== 最后100行日志 ==="
+            tail -100 build.log
+            echo "=== 关键错误信息 ==="
+            grep -i -B2 -A2 "error\|fail\|not found\|accept\|license" build.log | head -50
             exit 1
           fi
 
