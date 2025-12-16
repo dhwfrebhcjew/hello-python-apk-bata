@@ -3,19 +3,19 @@ name: Build Android APK
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # 设置超时时间
     
     steps:
-    - name: 1. 下载代码到服务器
-      uses: actions/checkout@v3
+    - name: 1. 下载代码
+      uses: actions/checkout@v4
     
     - name: 2. 设置Python环境
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: '3.9'
     
@@ -26,55 +26,90 @@ jobs:
           python3-pip \
           build-essential \
           git \
+          wget \
+          curl \
           zip \
           unzip \
-          openjdk-11-jdk \
+          openjdk-17-jdk \
           libncurses5 \
           libstdc++6 \
           zlib1g-dev \
           libffi-dev \
-          libssl-dev
+          libssl-dev \
+          libltdl-dev \
+          libgl1-mesa-dev \
+          libgles2-mesa-dev
     
-    - name: 4. 安装Python包
+    - name: 4. 安装Buildozer和依赖
       run: |
-        python -m pip install --upgrade pip
-        pip install cython==0.29.33 virtualenv buildozer
+        python -m pip install --upgrade pip setuptools wheel
+        pip install --no-cache-dir buildozer cython==0.29.33 virtualenv
     
-    - name: 5. 创建必要的缓存目录
+    - name: 5. 显示环境信息
       run: |
-        mkdir -p ~/.buildozer
-        mkdir -p ~/.android
+        echo "Python版本: $(python --version)"
+        echo "Buildozer版本: $(buildozer --version 2>/dev/null || echo '检查中...')"
+        echo "Java版本: $(java -version 2>&1 | head -1)"
     
-    - name: 6. 开始打包APK
+    - name: 6. 初始化Buildozer配置（如果不存在）
       run: |
-        echo "开始构建APK，首次构建需要20-40分钟..."
-        buildozer android debug 2>&1 | tee build.log
-        echo "检查构建结果..."
+        if [ ! -f "buildozer.spec" ]; then
+          echo "未找到buildozer.spec，正在创建默认配置..."
+          buildozer init
+          # 修改默认配置
+          sed -i 's/^title = My Application/title = Hello Python APK/' buildozer.spec
+          sed -i 's/^package.name = myapp/package.name = hellopythonapk/' buildozer.spec
+          sed -i 's/^requirements = python3,kivy/requirements = python3,kivy==2.1.0/' buildozer.spec
+          sed -i 's/^android.arch = armeabi-v7a/android.arch = arm64-v8a/' buildozer.spec
+        fi
     
-    - name: 7. 检查APK是否生成
+    - name: 7. 清理之前的构建
       run: |
-        if [ -f bin/*.apk ]; then
-          echo "✅ APK生成成功!"
-          ls -la bin/*.apk
+        rm -rf .buildozer/.gradle/
+        rm -rf .buildozer/android/platform/build-*/ || true
+    
+    - name: 8. 开始构建APK
+      id: build-apk
+      run: |
+        echo "开始构建APK，这可能需要30-40分钟..."
+        echo "=================================="
+        
+        # 设置环境变量加速下载
+        export BUILD_MEMORY="4G"
+        export GRADLE_OPTS="-Xmx4096m -Dorg.gradle.daemon=false"
+        
+        # 运行Buildozer并保存日志
+        timeout 2400 buildozer android debug 2>&1 | tee build_output.log
+        
+        # 检查构建结果
+        if ls bin/*.apk 1> /dev/null 2>&1; then
+          echo "✅ APK构建成功！"
+          APK_FILE=$(ls bin/*.apk | head -1)
+          echo "APK文件: $APK_FILE"
+          echo "文件大小: $(du -h "$APK_FILE" | cut -f1)"
+          echo "::set-output name=apk_path::$APK_FILE"
         else
-          echo "❌ 未找到APK文件，查看日志..."
-          cat build.log
+          echo "❌ APK构建失败！"
+          echo "最后的构建输出:"
+          tail -100 build_output.log
           exit 1
         fi
     
-    - name: 8. 上传APK文件（使用v4版本）
+    - name: 9. 上传构建日志
+      if: always()  # 无论成功失败都上传日志
       uses: actions/upload-artifact@v4
-      with:
-        name: hello-world-apk
-        path: bin/*.apk
-        if-no-files-found: error
-        retention-days: 7
-    
-    - name: 9. 上传构建日志（可选）
-      uses: actions/upload-artifact@v4
-      if: always()
       with:
         name: build-logs
         path: |
-          build.log
-          .buildozer/*.log
+          build_output.log
+          .buildozer/android/platform/*/build/outputs/**/*.log
+        if-no-files-found: warn
+        retention-days: 7
+    
+    - name: 10. 上传APK文件
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-apk
+        path: bin/*.apk
+        if-no-files-found: error
+        retention-days: 30
